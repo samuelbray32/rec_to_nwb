@@ -474,7 +474,7 @@ def find_acquisition_timing_pause(
     is_valid_gap = (timestamp_difference > min_duration) & (
         timestamp_difference < max_duration
     )
-    pause_start_ind = 0  # np.nonzero(is_valid_gap)[0][0]
+    pause_start_ind = np.nonzero(is_valid_gap)[0][0]
     pause_end_ind = pause_start_ind + 1
     pause_mid_time = (
         timestamps[pause_start_ind]
