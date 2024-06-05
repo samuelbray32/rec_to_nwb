@@ -45,6 +45,11 @@ class PositionOriginator:
         first_timestamps = []
 
         for dataset_ind, dataset in enumerate(self.datasets):
+            if "pos" not in dataset.data:
+                logger.warning(
+                    f"Dataset {dataset} does not contain position tracking data."
+                )
+                continue
             pos_path = dataset.data["pos"]
             conversion = meters_per_pixels[dataset_ind]
             try:
@@ -179,16 +184,21 @@ class PositionOriginator:
             mcu_neural_timestamps.loc[dio_camera_ticks[is_valid_tick]]
         )
 
-        # The DIOs and camera frames are initially unaligned. There is a
-        # half second pause at the start to allow for alignment.
-        pause_mid_time = find_acquisition_timing_pause(dio_systime)
+        if len(dio_systime) > 0:
+            # The DIOs and camera frames are initially unaligned. There is a
+            # half second pause at the start to allow for alignment.
+            pause_mid_time = find_acquisition_timing_pause(dio_systime)
 
-        # Estimate the frame rate from the DIO camera ticks as a sanity check.
-        frame_rate_from_dio = get_framerate(dio_systime[dio_systime > pause_mid_time])
-        logger.info(
-            "Camera frame rate estimated from DIO camera ticks:"
-            f" {frame_rate_from_dio:0.1f} frames/s"
-        )
+            # Estimate the frame rate from the DIO camera ticks as a sanity check.
+            frame_rate_from_dio = get_framerate(
+                dio_systime[dio_systime > pause_mid_time]
+            )
+            logger.info(
+                "Camera frame rate estimated from DIO camera ticks:"
+                f" {frame_rate_from_dio:0.1f} frames/s"
+            )
+        else:
+            pause_mid_time = None
 
         # Match the camera frames to the position tracking
         # Number of video frames can be different from online tracking because
@@ -196,12 +206,18 @@ class PositionOriginator:
         # Additionally, for offline tracking, frames can be skipped if the
         # frame is labeled as bad.
         video_position_info = pd.merge(
-            video_info, position_tracking, right_index=True, left_index=True, how="left"
-        )
+            video_info.drop(columns=[x for x in ['xloc','yloc','xloc2','yloc2'] if x in video_info.columns]),
+            position_tracking, right_index=True, left_index=True, how="left"
+        )   
 
         if ptp_enabled:
             logger.info("PTP detected")
             ptp_systime = np.asarray(video_position_info.HWTimestamp)
+
+            if pause_mid_time is None:
+                # estimate pause_mid_time from ptp timestamps if dio was missing
+                pause_mid_time = find_acquisition_timing_pause(ptp_systime)
+
             frame_rate_from_ptp = get_framerate(
                 ptp_systime[ptp_systime > pause_mid_time]
             )
@@ -394,7 +410,20 @@ def get_video_info(position_tracking_path):
     video_info = readTrodesExtractedDataFile(
         position_tracking_path.replace(".pos_online.dat", ".pos_cameraHWFrameCount.dat")
     )
-    return pd.DataFrame(video_info["data"]).set_index("PosTimestamp")
+    try:
+        return pd.DataFrame(video_info["data"]).set_index("PosTimestamp")
+    except:
+        video_info_2 = readTrodesExtractedDataFile(
+            position_tracking_path
+        )
+        video_info = pd.DataFrame(video_info["data"])
+        video_info = video_info.rename(columns={"frameCount": "HWframeCount"})
+        video_info_2 = pd.DataFrame(video_info_2["data"])
+        video_info_2 = video_info_2.rename(columns={'time':"PosTimestamp"})
+        
+        video_info = pd.concat([video_info, video_info_2],axis=1)
+        video_info = video_info.set_index("PosTimestamp")
+        return video_info
 
 
 def get_mcu_neural_timestamps(position_tracking_path):
@@ -451,7 +480,7 @@ def find_acquisition_timing_pause(
     is_valid_gap = (timestamp_difference > min_duration) & (
         timestamp_difference < max_duration
     )
-    pause_start_ind = np.nonzero(is_valid_gap)[0][0]
+    pause_start_ind = 0  # np.nonzero(is_valid_gap)[0][0]
     pause_end_ind = pause_start_ind + 1
     pause_mid_time = (
         timestamps[pause_start_ind]
