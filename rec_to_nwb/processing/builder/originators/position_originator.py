@@ -45,6 +45,11 @@ class PositionOriginator:
         first_timestamps = []
 
         for dataset_ind, dataset in enumerate(self.datasets):
+            if "pos" not in dataset.data:
+                logger.warning(
+                    f"Dataset {dataset} does not contain position tracking data."
+                )
+                continue
             pos_path = dataset.data["pos"]
             conversion = meters_per_pixels[dataset_ind]
             try:
